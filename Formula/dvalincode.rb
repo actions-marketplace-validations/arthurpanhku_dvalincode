@@ -6,28 +6,28 @@
 class Dvalincode < Formula
   desc "Approvable, local-first AI coding agent with a governed security scanner"
   homepage "https://github.com/arthurpanhku/dvalincode"
-  version "0.17.0"
+  version "0.19.0"
   license "MIT"
 
   on_macos do
     on_arm do
-      url "https://github.com/arthurpanhku/dvalincode/releases/download/v0.17.0/dvalincode-v0.17.0-macos-arm64.tar.gz"
-      sha256 "aa90d970bc0d5c8797472a2d4c782f05df8e91fc00588dcccf3f0ffdd0575836"
+      url "https://github.com/arthurpanhku/dvalincode/releases/download/v0.19.0/dvalincode-v0.19.0-macos-arm64.tar.gz"
+      sha256 "d4265a63f9c10b0af5c673085f3bc722ef072aefff2088ada8aeb208c0197647"
     end
     on_intel do
-      url "https://github.com/arthurpanhku/dvalincode/releases/download/v0.17.0/dvalincode-v0.17.0-macos-x64.tar.gz"
-      sha256 "5f14ba5651cff7582baf0f9b812d41699887c84315aa7e55d9dbb35f909fd14e"
+      url "https://github.com/arthurpanhku/dvalincode/releases/download/v0.19.0/dvalincode-v0.19.0-macos-x64.tar.gz"
+      sha256 "d87a3f4915e30533ea48e9d633e125c93fc60b102837b3eace9d2950d7c96d5a"
     end
   end
 
   on_linux do
     on_arm do
-      url "https://github.com/arthurpanhku/dvalincode/releases/download/v0.17.0/dvalincode-v0.17.0-linux-arm64.tar.gz"
-      sha256 "3b039491d96bd45308b952552b17e62905dfdb541c4a97f6aa37677975a4977b"
+      url "https://github.com/arthurpanhku/dvalincode/releases/download/v0.19.0/dvalincode-v0.19.0-linux-arm64.tar.gz"
+      sha256 "56b5c7150a3f474e95f306f96dea7f2c0fc2c416977725f7740b8a0b71533f81"
     end
     on_intel do
-      url "https://github.com/arthurpanhku/dvalincode/releases/download/v0.17.0/dvalincode-v0.17.0-linux-x64.tar.gz"
-      sha256 "7097ee5bc9ad302466bfae09666476853ac8580f3a096b604d9aa0cb351fb4ac"
+      url "https://github.com/arthurpanhku/dvalincode/releases/download/v0.19.0/dvalincode-v0.19.0-linux-x64.tar.gz"
+      sha256 "c99929e919f2fe2819e9f1a3222cbf15ffedfb77f30d3d80f466a72521837c90"
     end
   end
 

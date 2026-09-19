@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://github.com/arthurpanhku/dvalincode/releases/latest"><img src="https://img.shields.io/github/v/release/arthurpanhku/dvalincode?style=for-the-badge&color=818cf8&label=Release" alt="Release"></a>
   <a href="https://github.com/arthurpanhku/dvalincode/releases"><img src="https://img.shields.io/github/downloads/arthurpanhku/dvalincode/total?style=for-the-badge&color=blue&label=Downloads" alt="Downloads"></a>
-  <a href="#-测试"><img src="https://img.shields.io/badge/Tests-442%20%2F%20442%20%E2%9C%93-success?style=for-the-badge" alt="Tests"></a>
+  <a href="#-测试"><img src="https://img.shields.io/badge/Tests-584%20%2F%20584%20%E2%9C%93-success?style=for-the-badge" alt="Tests"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License"></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/arthurpanhku/dvalincode"><img src="https://api.scorecard.dev/projects/github.com/arthurpanhku/dvalincode/badge" alt="OpenSSF Scorecard"></a>
   <a href="#-一行安装"><img src="https://img.shields.io/badge/Platforms-macOS%20·%20Windows%20·%20Linux-blue?style=for-the-badge" alt="Platforms"></a>
@@ -38,6 +38,8 @@ Fix record 2c9d71ac03e0 · VERIFIED · scan-and-checks
   executor: claude-code (recorded, not consulted)
   targets: 1 before · 0 remaining
   coverage: complete → complete
+  introduced: 0 (gate high/new)
+  outcome: verified
   ✓ test: npm run test (exit 0)
   audit: run verify-36509f42 @ 414644c75af0
 ```
@@ -46,6 +48,12 @@ Fix record 2c9d71ac03e0 · VERIFIED · scan-and-checks
 「你的代码安全了」这种断言，Dvalin 也不允许它被这样解读 —— 每份记录都带着这次扫描
 究竟覆盖了什么，而一个没有任何检查能确认的修复，不会通过。
 [开放规范 →](docs/spec/FIX-VERIFICATION.md)
+
+修复本身也是一次改动，而改动既会移除问题，也可能带来新问题。所以记录里还带着复扫
+看到、而首扫没有看到的东西，以及这次判定所依据的门禁阈值：一个删掉了 `eval`、却引入
+了 SQL 注入的修复，会被记为 `regressed`，不予通过。签发方根本没去看的记录同样不通过
+—— `introduced: not determined` 直接失败，因为「不去查」绝不能比「查了并且查出问题」
+得分更高。
 
 Dvalin 是放在“代码生成”和“允许合并”之间的独立安全运行时。人类开发者、Coding
 Agent 和 CI 调用同一套版本化协议完成发现、修复与验证。它既可以独立运行，也可以通过
@@ -133,8 +141,19 @@ runner 会仅凭这个文件本身重新推导它 —— 重算哈希，并从�
 - repaired by claude-code — recorded, and not consulted for this verdict
 - targets: 1 before → 0 remaining
 - coverage: complete → complete
+- introduced: none (gate high/new)
+- outcome: verified
 - ✓ test: `npm run test` (exit 0)
 - audit chain: verify-eeb1bae7 @ 80881867270d
+```
+
+引入了新问题的修复，会在同一个地方说清楚，并让这个 job 失败：
+
+```
+❌ 916e2eeaf065 · NOT VERIFIED · scan-and-checks
+- introduced: 1 finding(s) the first scan did not report (gate high/new)
+  - critical dvalin/sql-injection — src/db.ts:31
+- outcome: regressed
 ```
 
 ### 或者让你的 agent 调用它
@@ -158,14 +177,21 @@ npx dvalincode mcp-install claude-code   # .mcp.json
 `mcpServers`，填反了编辑器会照单全收然后当没看见。这条命令会写对，并且合并进已有
 配置而不是覆盖。[编辑器与 MCP →](integrations/mcp/)
 
-`dvalin_scan` 支持 `diff: "uncommitted"`，只报告 agent 刚写的部分，而不是仓库里的全部存量问题。它不跑模型，也不会修改目标 workspace；它只持久化一份精简的本地安全
-workflow。Agent 可以用 fingerprint 精确读取单条发现，再通过 `dvalin_get_finding` 和
+`dvalin_scan` 支持 `diff: "uncommitted"`，只报告 agent 刚写的部分，而不是仓库里的全部存量问题。它不跑模型、不修改目标 workspace、也不持久化 Dvalin 状态，因此客户端可以默认允许这次预览。确认要修复某条发现后，Agent 再显式调用
+`dvalin_begin_verification` 创建精简的本地安全 workflow，用 fingerprint 精确读取单条发现，再通过 `dvalin_get_finding` 和
 `dvalin_verify_findings` 请求独立复扫。响应包含 MCP `structuredContent`，并可通过
 `dvalin_list_scanners` 查询组件是否就绪。同一 server 也提供可选的 `dvalin_run_task`
 实现助手，以及 session 和审计证据工具。
 
-已针对 Claude Code 2.1.226 和 Codex 0.147.0 做过端到端验证 —— 是用已发布的包真实发起
-工具调用，而不只是握手成功。[Agent 集成 →](integrations/)
+下面每一个客户端都被驱动到了真实的工具调用，而不只是握手成功 —— 具体是哪个客户端、
+哪个版本、哪一天验的，写成了表格而不是一句话，因为手写的版本号会悄无声息地过期。
+[集成支持 ↓](#-集成支持) · [Agent 集成 →](integrations/)
+
+仓库还提供一份 [Codex/Claude 双兼容插件](integrations/dvalin-security/)：同时包含两套
+原生 manifest、共享安全门禁 skill 和本地 MCP server 配置。安装后，agent 可根据任务
+上下文自动发现门禁，不再依赖每位开发者记住扫描提示词。
+Codex 会采纳扫描工具的只读 MCP 标注；Claude Code 按其安全设计仍需显式授权一次。
+插件给出精确到只读扫描工具的 allow 规则，不要求用户绕过所有权限。
 
 ### 你在哪儿干活，它就在哪儿
 
@@ -173,10 +199,10 @@ workflow。Agent 可以用 fingerprint 精确读取单条发现，再通过 `dva
 
 | Harness | 怎么接 |
 |---|---|
-| **Claude Code** | `dvalincode mcp-install claude-code`，或 `claude mcp add` · [skill](integrations/claude-code/) |
-| **Codex** | `codex mcp add` · 与 Codex Security 的 [SARIF 互操作](integrations/codex-security/) |
+| **Claude Code** | [双兼容插件](integrations/dvalin-security/)，或 `claude mcp add` · [独立 skill](integrations/claude-code/) |
+| **Codex** | [双兼容插件](integrations/dvalin-security/)，或 `codex mcp add` · 与 Codex Security 的 [SARIF 互操作](integrations/codex-security/) |
 | **Cursor** | `dvalincode mcp-install cursor` |
-| **VS Code** | `dvalincode mcp-install vscode` · 在 Problems 面板出结果的[扩展](editors/vscode/) —— *已构建，尚未发布* |
+| **VS Code** | `dvalincode mcp-install vscode` · 在 Problems、coverage/gate 状态和离线 VFR 校验中展示结果的[扩展](editors/vscode/) —— *已构建，尚未发布* |
 | **Windsurf · Zed** | 在各自设置里配 stdio MCP —— [server 命令](integrations/mcp/) |
 | **任意 MCP 客户端** | [MCP registry](https://registry.modelcontextprotocol.io/)：`io.github.arthurpanhku/dvalincode` |
 | **GitHub Actions** | [Marketplace action](https://github.com/marketplace/actions/dvalin-security-scan) —— 结果直接标在 PR diff 上 |
@@ -255,6 +281,62 @@ Ollama 选择开放权重模型；托管模型的许可取决于相应 provider�
 ```sh
 dvalincode report verify    # 重新推导上次运行审计日志的哈希链
 ```
+
+---
+
+## 🧩 集成支持
+
+AI 协助写出来的代码，在合并之前会经过四道手：写它的 agent、开发者读它的编辑器、
+拦它的 Pull Request，以及最后必须相信这个结论的评审者。一个只存在于其中一处的安全
+结论不是门禁，只是一条下一环节可以无视的建议。
+
+Dvalin 在这四处背后是同一个 MCP server、同一次确定性扫描 —— 所以答案不会因为谁在问
+而改变。
+
+| 开发环节 | 你在哪儿 | Dvalin 怎么接进去 | 状态 |
+|---|---|---|---|
+| **写代码** | Claude Code | [双兼容插件](integrations/dvalin-security/) · `claude mcp add` · `mcp-install claude-code` | ✅ 会话已验证 |
+| | Codex | [双兼容插件](integrations/dvalin-security/) · `codex mcp add` · [SARIF 互操作](integrations/codex-security/) | ✅ 会话已验证 · 见下方截图 |
+| | Cursor | `dvalincode mcp-install cursor` | ⚙️ 配置已验证 |
+| | Windsurf · Zed | 通过它们自己的设置接 stdio MCP | ⚙️ 已文档化，未验证 |
+| | 任意 MCP 客户端 | registry `io.github.arthurpanhku/dvalincode` | ⚙️ 已发布 |
+| **回头读代码** | VS Code | `mcp-install vscode` · [扩展](editors/vscode/)：Problems、覆盖度与门禁状态 | ✅ 编辑器内已验证 |
+| **卡住合并** | GitHub Actions | [Marketplace action](https://github.com/marketplace/actions/dvalin-security-scan) —— finding 落在 diff 上，fix record 在 runner 上重新推导 | ✅ 本仓库自己的 CI 就在跑 |
+| | 任意 CI | `dvalin scan . --fail-on high`，输出 SARIF | ✅ 退出码就是契约 |
+| **相信这个结论** | 任何人，离线 | `dvalin verify-fix record.json` | ✅ 不需要 workspace、网络或任何 Dvalin 状态 |
+
+**✅** 表示真实客户端被端到端驱动过，并且观察到了工具调用。
+**⚙️** 表示配置能生成、格式经过测试，但还没有抓到会话记录。这个区别这里不含糊过去 ——
+一个能被加载的配置文件，不能证明工具真的被调用过。
+
+### 每一条结论的依据
+
+| 客户端 | 版本 | 检查时间 | 怎么检查的 |
+|---|---|---|---|
+| Claude Code | CLI 2.1.260 | 2026-09-04 | server 连上，只放行 `dvalin_scan` 一个工具并被真实调用，返回 3 条 finding —— 见下方截图 |
+| Claude Code | CLI 2.1.251 | 2026-08-31 | 每周的 [`harness-interop`](.github/workflows/harness-interop.yml)：对构建产物做真实握手，这一步不需要任何凭据 |
+| Codex | CLI 0.153.2 | 2026-09-18 | 在临时只读沙箱中真实调用 `dvalin_scan`；完成的 MCP 事件以 JSONL 记录，返回 1 条 `dvalin/eval` finding —— 见下方截图 |
+| Codex | CLI 0.151.0 | 2026-08-31 | 每周的 `harness-interop`：server 配置被接受并按 stdio 存下。**这不是握手** —— 在设置 `CODEX_API_KEY` 之前，调用工具那一步一直是 skipped |
+| VS Code | 1.134.0 · 扩展 0.18.0 | 2026-09-03 | 干净 profile 里安装打包好的 VSIX；finding、门禁和覆盖度都出现在编辑器里 —— 见下方截图 |
+| Cursor | — | 2026-09-04 | `mcp-install cursor` 会把 `.cursor/mcp.json` 写成 `mcpServers` 结构；但还没有抓到会话记录 |
+
+那个每周任务之所以存在，是因为这段话的早期版本手写了两个 CLI 版本号，两个都在几周内
+过期，而没有任何东西提醒过。现在它每周对着这些工具的当周版本重跑一次 —— 上面这些日期
+要么自己往前走，要么就公开地停在那里。
+
+### 同一条 finding，在不同的地方
+
+**Claude Code** —— 只放行了一个只读工具，以及那次 MCP 调用本身：
+
+![Claude Code 会话调用 Dvalin MCP server](docs/screenshots/10-claude-code-session.png)
+
+**Codex** —— 一次只读 MCP 调用，并单独展示完成态的 JSONL 工具事件：
+
+![Codex 会话调用 Dvalin MCP server](docs/screenshots/11-codex-session.png)
+
+**VS Code** —— 同一套扫描器契约，变成波浪线和状态栏：
+
+![VS Code 里的 Dvalin finding 与覆盖度状态](docs/screenshots/09-vscode-dvalin-integration.png)
 
 ---
 
@@ -505,6 +587,32 @@ DvalinCode 维护项目级治理证据，便于开源用户和企业安全评审
   <img src="assets/dvalin-verify-local.jpg" alt="Dvalin 本地真实模型 Verify 回合及其确定性复扫：100/100 A、四引擎完整覆盖、gate 通过、0 条发现" width="100%">
 </p>
 
+### 当前 Mac mini 冒烟测试
+
+2026-09-18，在 Apple 芯片 Mac mini（macOS 27.0）上构建并运行了提交
+`d4bf02b` 的本地应用。一次性测试项目未配置 API Key 或模型，只选择无需网络的
+内置扫描器。Dvalin 在 `quantity.js:3` 定位到刻意植入的 `eval`，报告
+**1 条高危、88/100 · B**，记录所选引擎 **1/1** 完整覆盖，并正确阻断 `high`
+安全门禁：
+
+<p align="center">
+  <img src="docs/screenshots/12-mac-mini-local-scan.png" alt="Mac mini 上的 Dvalin 本地扫描：1 条 eval 高危发现、88/100 B、内置扫描器完整覆盖，high 门禁被阻断" width="100%">
+</p>
+
+把 `eval` 换成受约束的整数解析器，并补充可执行输入回归测试后，**3/3** 测试
+全部通过；所选引擎复扫得到 **0 条发现、100/100 · A**、覆盖完整、门禁通过：
+
+<p align="center">
+  <img src="docs/screenshots/13-mac-mini-clean-rescan.png" alt="Mac mini 上的 Dvalin 本地复扫：0 条发现、100/100 A、内置扫描器完整覆盖，high 门禁通过" width="100%">
+</p>
+
+同一个 CLI 工作流以退出码 0 运行 `npm run test`，生成
+`dvalin-fix-record/v2`，随后 `dvalin verify-fix` 在离线条件下重新推导并返回
+`ok: true`。干净复扫截图拍摄时尚未导入记录，因此仍显示 **Offline fix record:
+Not attached**。Web 工作区现在可以导入这份便携 JSON，在离线条件下重新推导哈希与
+判定，并展示执行者、检查命令和退出码。这张干净复扫只说明所选引擎没有发现问题，
+不代表代码被证明绝对安全。
+
 **Home → Code → Dvalin——当前三个工作区：**
 
 <p align="center">
@@ -564,6 +672,18 @@ dvalincode mcp-serve             # 供外部 Agent 调用的任务级 stdio MCP 
 
 无头 `run` 和 `mcp-serve` 与交互客户端共用同一个策略与审计关卡。cron、CI
 和外部 Agent 示例见[无人值守配方](docs/RECIPES-UNATTENDED.md)。
+
+扫描过、或者产出过 fix record 的运行，还会在结果旁边带上一份 `verification` 信封 ——
+`json`、`stream-json` 以及 MCP `dvalin_run_task` 的返回里都有。`coverageStatus` 取的
+是这次运行**有证据支持的最弱**覆盖度，因此一次完整扫描不能替一次部分扫描背书；产出
+的记录按路径列出，可离线复验。CI 门禁可以直接读它：
+
+```sh
+jq -e '.verification.coverageStatus == "complete"' run.json || exit 1
+```
+
+这和 PR 评论用的是同一条规则，只是用在没有人盯着的那个界面上。
+[Harness 模式 →](docs/HARNESS-MODE.md)
 
 ### Windows
 
@@ -730,7 +850,8 @@ RESTORE → COMPACT → COMMAND → BUILD → RUN → SAVE → RESPOND → DONE
 npm test
 ```
 
-**442 个测试 · 62 个文件 · 全部通过。**
+**584 个核心测试 · 74 个文件 · 全部通过。** VS Code 扩展另有 37 个测试，
+以及一个可选的已发布包集成测试。
 
 ---
 
@@ -857,7 +978,7 @@ Linux 与 macOS 命令通过 <code>/bin/sh</code> 执行；Windows 命令通过�
 ```sh
 git clone https://github.com/arthurpanhku/dvalincode
 cd dvalincode && npm install
-npm test                # 442/442 ✅
+npm test                # 584/584 核心测试 ✅
 npm run typecheck
 ```
 
@@ -917,6 +1038,8 @@ prompt、UI 文案、工具 schema、模块布局和产品实现均为原创；�
 | Shivas | [@shivasb42](https://github.com/shivasb42) |
 | Aditya | [@adity982](https://github.com/adity982) |
 | badhope | [@weed33834](https://github.com/weed33834) |
+| Samran Asif | [@webdevsamran](https://github.com/webdevsamran) |
+| dchaudhari7177 | [@dchaudhari7177](https://github.com/dchaudhari7177) |
 
 查看[完整贡献记录](https://github.com/arthurpanhku/dvalincode/graphs/contributors)，其中也包含自动依赖更新和维护记录。
 

@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from 'react';
 import { client, fetchSessionDetail } from '../lib/client.ts';
-import type { ChatMessage, ToolCallEvent, ServerEvent, BackendChatMessage, ApprovalMode, AgentMode, PendingApproval, CodePermissionMode } from '../types.ts';
+import { mapBackendMessages, withRecoveredNotices, withoutRecoveredNotice } from '../lib/messages.ts';
+import type { ChatMessage, ChatTurnOutcome, ToolCallEvent, ServerEvent, ApprovalMode, AgentMode, PendingApproval, CodePermissionMode } from '../types.ts';
 
 export type UseChatOptions = {
   sessionId?: string;
@@ -40,77 +41,6 @@ function insertBeforePendingAssistant(messages: ChatMessage[], message: ChatMess
   return [...messages, message];
 }
 
-/** Convert saved backend messages into UI chat messages for session restore */
-function mapBackendMessages(raw: BackendChatMessage[]): ChatMessage[] {
-  const result: ChatMessage[] = [];
-  let assistantBuf: { content: string; toolCalls: ToolCallEvent[] } | null = null;
-  // Map from tool_call_id → index in assistantBuf.toolCalls
-  const tcIndex = new Map<string, number>();
-
-  const flushAssistant = () => {
-    if (assistantBuf) {
-      result.push({ role: 'assistant', content: assistantBuf.content, toolCalls: assistantBuf.toolCalls, pending: false });
-      assistantBuf = null;
-      tcIndex.clear();
-    }
-  };
-
-  for (const msg of raw) {
-    if (msg.role === 'system') continue;
-
-    if (msg.role === 'user') {
-      flushAssistant();
-      result.push({ role: 'user', content: msg.content });
-      continue;
-    }
-
-    if (msg.role === 'assistant') {
-      flushAssistant();
-      // Build tool calls from native tool_calls array
-      const toolCalls: ToolCallEvent[] = (msg.tool_calls ?? []).map((tc) => ({
-        id: tc.id,
-        name: tc.name,
-        input: (() => { try { return JSON.parse(tc.arguments); } catch { return tc.arguments; } })(),
-        status: 'done' as const,
-      }));
-      assistantBuf = { content: msg.content, toolCalls };
-      // Register id→index for matching tool results
-      toolCalls.forEach((tc, i) => tcIndex.set(tc.id, i));
-      continue;
-    }
-
-    if (msg.role === 'tool' && assistantBuf) {
-      const id = msg.tool_call_id ?? '';
-      const name = msg.name ?? 'unknown';
-      const output = msg.content.replace(/^\[Tool \w+ result\]:\n/, '').replace(/^\[Tool \w+ error\]: /, '');
-      const isError = msg.content.startsWith(`[Tool ${name} error]:`);
-
-      const idx = id ? tcIndex.get(id) : undefined;
-      if (idx !== undefined) {
-        // Update existing tool call with its result
-        const tc = assistantBuf.toolCalls[idx]!;
-        if (isError) {
-          assistantBuf.toolCalls[idx] = { ...tc, error: output, status: 'error' };
-        } else {
-          assistantBuf.toolCalls[idx] = { ...tc, output, status: 'done' };
-        }
-      } else {
-        // Orphan tool result — create an entry
-        assistantBuf.toolCalls.push({
-          id: id || `tc_${assistantBuf.toolCalls.length}`,
-          name,
-          input: {},
-          output: isError ? undefined : output,
-          error: isError ? output : undefined,
-          status: isError ? 'error' : 'done',
-        });
-      }
-    }
-  }
-  flushAssistant();
-  return result;
-}
-
 export function useChat(opts: UseChatOptions = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [connected, setConnected] = useState(false);
@@ -118,13 +48,27 @@ export function useChat(opts: UseChatOptions = {}) {
   const [runningSessionId, setRunningSessionId] = useState<string | undefined>();
   const [currentSessionId, setCurrentSessionId] = useState<string | undefined>(opts.sessionId);
   const [lastUsage, setLastUsage] = useState<UsageStats | undefined>();
+  const [lastTurnOutcome, setLastTurnOutcome] = useState<ChatTurnOutcome | undefined>();
   const [pendingApprovals, setPendingApprovals] = useState<PendingApproval[]>([]);
   const pendingToolCallsRef = useRef<Map<string, ToolCallEvent>>(new Map());
+  const activeMessageIdRef = useRef<string | undefined>(undefined);
+
+  const finishActiveTurn = useCallback((status: ChatTurnOutcome['status'], error?: string) => {
+    const messageId = activeMessageIdRef.current;
+    if (!messageId) return;
+    setLastTurnOutcome({ messageId, status, ...(error ? { error } : {}) });
+    activeMessageIdRef.current = undefined;
+  }, []);
 
   const connect = useCallback(() => {
     client.connect({
       onOpen: () => setConnected(true),
-      onClose: () => { setConnected(false); setSending(false); setRunningSessionId(undefined); },
+      onClose: () => {
+        finishActiveTurn('error', 'Connection closed before the turn completed.');
+        setConnected(false);
+        setSending(false);
+        setRunningSessionId(undefined);
+      },
       onEvent: (event: ServerEvent) => {
         switch (event.type) {
           case 'session_id':
@@ -240,7 +184,10 @@ export function useChat(opts: UseChatOptions = {}) {
                       break;
                     }
                   }
-                  setMessages(uiMessages);
+                  // This rebuilds the thread from the snapshot, which has no
+                  // notion of a recovered turn — re-attach any still unresolved
+                  // so a replay does not quietly drop the notice.
+                  setMessages(withRecoveredNotices(uiMessages, detail.recovered));
                 })
                 .catch(() => {
                   setMessages((prev) =>
@@ -257,6 +204,7 @@ export function useChat(opts: UseChatOptions = {}) {
             if (event.usage) setLastUsage(event.usage);
             pendingToolCallsRef.current.clear();
             setPendingApprovals([]);
+            finishActiveTurn('completed');
             setSending(false);
             setRunningSessionId(undefined);
             break;
@@ -270,6 +218,7 @@ export function useChat(opts: UseChatOptions = {}) {
             })));
             pendingToolCallsRef.current.clear();
             setPendingApprovals([]);
+            finishActiveTurn('interrupted');
             setSending(false);
             setRunningSessionId(undefined);
             break;
@@ -287,6 +236,7 @@ export function useChat(opts: UseChatOptions = {}) {
               }
               return [...prev, { role: 'assistant', content: `**Error:** ${event.message}`, toolCalls: [], pending: false }];
             });
+            finishActiveTurn('error', event.message);
             setSending(false);
             setRunningSessionId(undefined);
             break;
@@ -302,17 +252,21 @@ export function useChat(opts: UseChatOptions = {}) {
         }
       },
     });
-  }, []);
+  }, [finishActiveTurn]);
 
   const send = useCallback(
-    (content: string) => {
-      if (sending) return;
-      const messageId = crypto.randomUUID();
+    (content: string, resendMessageId?: string) => {
+      if (sending || activeMessageIdRef.current) return;
+      // Re-sending a recovered turn keeps its original messageId, so the
+      // turn_end it writes closes the journal entry the notice came from
+      // instead of leaving it unresolved behind a second turn.
+      const messageId = resendMessageId ?? crypto.randomUUID();
+      activeMessageIdRef.current = messageId;
       setSending(true);
       setRunningSessionId(currentSessionId);
       pendingToolCallsRef.current.clear();
       setMessages((prev) => [
-        ...prev,
+        ...(resendMessageId ? withoutRecoveredNotice(prev, resendMessageId) : prev),
         { role: 'user', content, messageId },
         { role: 'assistant', content: '', toolCalls: [], pending: true, startedAt: Date.now() },
       ]);
@@ -331,11 +285,12 @@ export function useChat(opts: UseChatOptions = {}) {
           ...prev.slice(0, -1),
           { role: 'assistant', content: `**Error:** ${err instanceof Error ? err.message : 'Not connected'}`, toolCalls: [], pending: false },
         ]);
+        finishActiveTurn('error', err instanceof Error ? err.message : 'Not connected');
         setSending(false);
         setRunningSessionId(undefined);
       }
     },
-    [sending, currentSessionId, opts.cwd, opts.approvalMode, opts.mode, opts.codePermissionMode],
+    [sending, currentSessionId, opts.cwd, opts.approvalMode, opts.mode, opts.codePermissionMode, finishActiveTurn],
   );
 
   const compact = useCallback(() => {
@@ -358,7 +313,7 @@ export function useChat(opts: UseChatOptions = {}) {
   const loadSession = useCallback(async (id: string) => {
     try {
       const detail = await fetchSessionDetail(id);
-      const uiMessages = mapBackendMessages(detail.messages);
+      const uiMessages = withRecoveredNotices(mapBackendMessages(detail.messages), detail.recovered);
       setMessages(uiMessages);
       setCurrentSessionId(id);
       return detail;
@@ -373,9 +328,11 @@ export function useChat(opts: UseChatOptions = {}) {
     setMessages([]);
     setCurrentSessionId(undefined);
     pendingToolCallsRef.current.clear();
+    activeMessageIdRef.current = undefined;
     setSending(false);
     setLastUsage(undefined);
+    setLastTurnOutcome(undefined);
   }, []);
 
-  return { messages, connected, sending, runningSessionId, currentSessionId, lastUsage, pendingApprovals, connect, send, compact, interrupt, loadSession, reset, respondToApproval };
+  return { messages, connected, sending, runningSessionId, currentSessionId, lastUsage, lastTurnOutcome, pendingApprovals, connect, send, compact, interrupt, loadSession, reset, respondToApproval };
 }

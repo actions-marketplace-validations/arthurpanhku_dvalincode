@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://github.com/arthurpanhku/dvalincode/releases/latest"><img src="https://img.shields.io/github/v/release/arthurpanhku/dvalincode?style=for-the-badge&color=818cf8&label=Release" alt="Release"></a>
   <a href="https://github.com/arthurpanhku/dvalincode/releases"><img src="https://img.shields.io/github/downloads/arthurpanhku/dvalincode/total?style=for-the-badge&color=blue&label=Downloads" alt="Downloads"></a>
-  <a href="#-tests"><img src="https://img.shields.io/badge/Tests-442%20%2F%20442%20%E2%9C%93-success?style=for-the-badge" alt="Tests"></a>
+  <a href="#-tests"><img src="https://img.shields.io/badge/Tests-584%20%2F%20584%20%E2%9C%93-success?style=for-the-badge" alt="Tests"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License"></a>
   <a href="https://scorecard.dev/viewer/?uri=github.com/arthurpanhku/dvalincode"><img src="https://api.scorecard.dev/projects/github.com/arthurpanhku/dvalincode/badge" alt="OpenSSF Scorecard"></a>
   <a href="#-quick-install"><img src="https://img.shields.io/badge/Platforms-macOS%20·%20Windows%20·%20Linux-blue?style=for-the-badge" alt="Platforms"></a>
@@ -41,6 +41,8 @@ Fix record 2c9d71ac03e0 · VERIFIED · scan-and-checks
   executor: claude-code (recorded, not consulted)
   targets: 1 before · 0 remaining
   coverage: complete → complete
+  introduced: 0 (gate high/new)
+  outcome: verified
   ✓ test: npm run test (exit 0)
   audit: run verify-36509f42 @ 414644c75af0
 ```
@@ -50,6 +52,14 @@ these checks were observed to pass.* It is not a claim that your code is safe,
 and Dvalin will not let it be read as one — every record carries what the scan
 actually covered, and a repair no check could confirm does not pass.
 [The open profile →](docs/spec/FIX-VERIFICATION.md)
+
+A repair is a change, and a change can add as well as remove. So the record also
+carries what the re-scan saw that the first scan did not, and the gate threshold
+the verdict was reached under: a fix that removes an `eval` and introduces an SQL
+injection is recorded as `regressed` and does not verify. Neither does a record
+whose issuer never looked — `introduced: not determined` fails, because a
+verifier that skips the question must not score better than one that asks it and
+finds something.
 
 Dvalin is the independent security runtime between code generation and merge.
 Humans, coding agents, and CI call the same versioned contract for discovery,
@@ -144,8 +154,19 @@ job. The reviewer does not have to trust the pipeline that produced it, or us.
 - repaired by claude-code — recorded, and not consulted for this verdict
 - targets: 1 before → 0 remaining
 - coverage: complete → complete
+- introduced: none (gate high/new)
+- outcome: verified
 - ✓ test: `npm run test` (exit 0)
 - audit chain: verify-eeb1bae7 @ 80881867270d
+```
+
+A repair that regressed says so in the same place, and fails the job with it:
+
+```
+❌ 916e2eeaf065 · NOT VERIFIED · scan-and-checks
+- introduced: 1 finding(s) the first scan did not report (gate high/new)
+  - critical dvalin/sql-injection — src/db.ts:31
+- outcome: regressed
 ```
 
 ### Or let your agent call it
@@ -172,26 +193,37 @@ merges into whatever is already there. [Editors and MCP →](integrations/mcp/)
 `dvalin_scan` accepts `diff: "uncommitted"`, which reports only on what the
 agent just wrote rather than everything the repository already carried — the
 difference between a usable answer and a wall of pre-existing findings. It never
-runs a model or edits the target workspace. It records a
-small local workflow so an agent can retrieve one finding by fingerprint and
-request an independent re-scan through `dvalin_get_finding` and
-`dvalin_verify_findings`.
+runs a model, edits the target workspace, or persists Dvalin state, so clients
+can allow the preview by default. When a finding will be repaired, the agent
+explicitly calls `dvalin_begin_verification` to record a small local workflow;
+it can then retrieve the finding by fingerprint and request an independent
+re-scan through `dvalin_get_finding` and `dvalin_verify_findings`.
 
 That last one is the point: an agent that has just written a repair can ask for
 an independent verdict on it. Dvalin re-scans, runs the project's own checks
 itself, and returns a **Verified Fix Record** — what was targeted, what remains,
-which commands ran and the exit codes Dvalin observed, and how much of the
-codebase was actually covered. Whoever wrote the repair is recorded and never
-consulted. `dvalin_verify_fix` re-derives such a record offline, so the reviewer
+what the repair introduced that was not there before, the gate the verdict was
+reached under, which commands ran and the exit codes Dvalin observed, and how
+much of the codebase was actually covered. Whoever wrote the repair is recorded
+and never consulted. `dvalin_verify_fix` re-derives such a record offline, so the reviewer
 receiving it does not have to trust the tool that issued it.
 [FVP-1 →](docs/spec/FIX-VERIFICATION.md) Responses include MCP `structuredContent`; scanner
 readiness is available through `dvalin_list_scanners`. The same server exposes
 `dvalin_run_task` as an optional implementation helper, plus session and audit
 evidence tools.
 
-Verified end to end against Claude Code 2.1.226 and Codex 0.147.0, driving a
-real tool call against the published package rather than only completing a
-handshake. [Agent integrations →](integrations/)
+Every client below has been driven to a real tool call rather than only a
+handshake — which client, which version, and on what date is a table rather
+than a sentence, because hand-written version numbers go stale quietly.
+[Integration support ↓](#-integration-support) · [Agent integrations →](integrations/)
+
+The repository also contains one [dual Codex/Claude plugin payload](integrations/dvalin-security/)
+with both native manifests, the shared security-gate skill, and the local MCP
+server configuration. Installing it makes the gate discoverable from task
+context instead of requiring every developer to remember a scan prompt.
+Codex honors the scan's read-only MCP annotation. Claude Code requires one
+explicit MCP permission by design; the plugin documents the exact scan-only
+allow rule instead of asking users to bypass all permissions.
 
 ### Wherever you already work
 
@@ -199,10 +231,10 @@ One server, reached the way each tool expects:
 
 | Harness | How Dvalin reaches it |
 |---|---|
-| **Claude Code** | `dvalincode mcp-install claude-code`, or `claude mcp add` · [skill](integrations/claude-code/) |
-| **Codex** | `codex mcp add` · [SARIF interop](integrations/codex-security/) with Codex Security |
+| **Claude Code** | [dual plugin](integrations/dvalin-security/) or `claude mcp add` · [standalone skill](integrations/claude-code/) |
+| **Codex** | [dual plugin](integrations/dvalin-security/) or `codex mcp add` · [SARIF interop](integrations/codex-security/) with Codex Security |
 | **Cursor** | `dvalincode mcp-install cursor` |
-| **VS Code** | `dvalincode mcp-install vscode` · [extension](editors/vscode/) for the Problems panel — *built, not yet published* |
+| **VS Code** | `dvalincode mcp-install vscode` · [extension](editors/vscode/) for Problems, coverage/gate status, and offline VFR verification — *built, not yet published* |
 | **Windsurf · Zed** | stdio MCP through their own settings — [server command](integrations/mcp/) |
 | **Any MCP client** | [MCP registry](https://registry.modelcontextprotocol.io/): `io.github.arthurpanhku/dvalincode` |
 | **GitHub Actions** | [Marketplace action](https://github.com/marketplace/actions/dvalin-security-scan) — findings inline on the pull request diff |
@@ -291,6 +323,66 @@ You can still prove what the agent did after the fact:
 ```sh
 dvalincode report verify    # re-derive the hash chain of the last run's audit log
 ```
+
+---
+
+## 🧩 Integration support
+
+Code written with an AI assistant passes through four sets of hands before it
+merges: the agent that writes it, the editor the developer reads it back in, the
+pull request that gates it, and the reviewer who has to believe the result. A
+security answer that exists in only one of those places is not a gate — it is a
+suggestion the next stage is free to ignore.
+
+Dvalin is one MCP server and one deterministic scan behind all four, so the
+answer does not change depending on who asks it.
+
+| Stage of the loop | Where you are | How Dvalin gets there | Status |
+|---|---|---|---|
+| **Writing the code** | Claude Code | [dual plugin](integrations/dvalin-security/) · `claude mcp add` · `mcp-install claude-code` | ✅ session verified |
+| | Codex | [dual plugin](integrations/dvalin-security/) · `codex mcp add` · [SARIF interop](integrations/codex-security/) | ✅ session verified · capture below |
+| | Cursor | `dvalincode mcp-install cursor` | ⚙️ config verified |
+| | Windsurf · Zed | stdio MCP through their own settings | ⚙️ documented, unverified |
+| | Any MCP client | registry `io.github.arthurpanhku/dvalincode` | ⚙️ published |
+| **Reading it back** | VS Code | `mcp-install vscode` · [extension](editors/vscode/) for Problems, coverage and gate status | ✅ editor verified |
+| **Gating the merge** | GitHub Actions | [Marketplace action](https://github.com/marketplace/actions/dvalin-security-scan) — findings on the diff, fix records re-derived on the runner | ✅ runs on this repository's own CI |
+| | Any CI | `dvalin scan . --fail-on high`, SARIF out for code scanning | ✅ the exit code is the contract |
+| **Believing the result** | anyone, offline | `dvalin verify-fix record.json` | ✅ no workspace, no network, no Dvalin state |
+
+**✅** means a real client was driven end to end and the tool call was observed.
+**⚙️** means the configuration is generated and its shape is tested, but no
+session has been captured. The difference is not smoothed over here, because a
+config file that loads is not evidence that a tool was ever called.
+
+### What each claim rests on
+
+| Client | Version | Checked | How |
+|---|---|---|---|
+| Claude Code | CLI 2.1.260 | 2026-09-04 | server connected, `dvalin_scan` called with only that tool allow-listed, three findings returned — capture below |
+| Claude Code | CLI 2.1.251 | 2026-08-31 | weekly [`harness-interop`](.github/workflows/harness-interop.yml) — a real handshake against the built binary, which needs no credentials |
+| Codex | CLI 0.153.2 | 2026-09-18 | real `dvalin_scan` call in an ephemeral read-only sandbox; the completed MCP event was recorded as JSONL and returned one `dvalin/eval` finding — capture below |
+| Codex | CLI 0.151.0 | 2026-08-31 | weekly `harness-interop` — the server spec is accepted and stored as stdio. **Not a handshake**: the tool-call step stays skipped until `CODEX_API_KEY` is set |
+| VS Code | 1.134.0 · extension 0.18.0 | 2026-09-03 | packaged VSIX in a clean profile; finding, gate and coverage rendered in the editor — capture below |
+| Cursor | — | 2026-09-04 | `mcp-install cursor` writes `.cursor/mcp.json` under `mcpServers`; no session has been captured |
+
+That weekly workflow exists because an earlier version of this claim named two
+CLI versions by hand, both went stale within weeks, and nothing said so. It now
+re-checks against whatever those tools shipped that week, so the dates above
+either move on their own or stop moving in public.
+
+### The same finding, in each place
+
+**Claude Code** — one read-only tool allow-listed, and the MCP call itself:
+
+![A Claude Code session calling the Dvalin MCP server](docs/screenshots/10-claude-code-session.png)
+
+**Codex** — one read-only MCP call, with the completed JSONL tool event shown separately:
+
+![A Codex session calling the Dvalin MCP server](docs/screenshots/11-codex-session.png)
+
+**VS Code** — the same scanner contract, as squiggles and a status bar:
+
+![A Dvalin finding and its coverage status inside VS Code](docs/screenshots/09-vscode-dvalin-integration.png)
 
 ---
 
@@ -596,6 +688,35 @@ server re-scan reported complete coverage, a passing gate, 0 findings, 100/100 �
   <img src="assets/dvalin-verify-local.jpg" alt="A local Dvalin model-driven Verify run showing its test evidence beside a deterministic 100/100 A re-scan, complete four-engine coverage, and a passing gate" width="100%">
 </p>
 
+### Current Mac mini smoke test
+
+On 2026-09-18, commit `d4bf02b` was built and run as the local app on an
+Apple-silicon Mac mini with macOS 27.0. The disposable test project had no API
+key or configured model, and selected only the network-independent built-in
+scanner. Dvalin located a deliberately vulnerable `eval` at `quantity.js:3`,
+reported **1 high finding, 88/100 · B**, recorded complete **1/1** selected-engine
+coverage, and blocked the `high` security gate:
+
+<p align="center">
+  <img src="docs/screenshots/12-mac-mini-local-scan.png" alt="Mac mini local Dvalin scan showing one high eval finding, 88/100 B, complete built-in scanner coverage, and a blocked high-severity gate" width="100%">
+</p>
+
+After replacing `eval` with a constrained integer parser and adding an
+executable-input regression test, all **3/3** tests passed. The selected engine
+then reported **0 findings, 100/100 · A**, complete coverage, and a passing gate:
+
+<p align="center">
+  <img src="docs/screenshots/13-mac-mini-clean-rescan.png" alt="Mac mini local Dvalin re-scan showing zero findings, 100/100 A, complete built-in scanner coverage, and a passing high-severity gate" width="100%">
+</p>
+
+The same CLI workflow ran `npm run test` with exit code 0, issued a
+`dvalin-fix-record/v2`, and `dvalin verify-fix` re-derived it offline with
+`ok: true`. The clean-scan screenshot was captured before that record was
+imported, so it still says **Offline fix record: Not attached**. The Web workspace
+can now import the portable JSON record, re-derive its hash and verdict offline,
+and display its executor, checks, and exit codes. A clean scan is evidence about
+the selected engine, not a claim that the code is proven safe.
+
 **Home → Code → Dvalin — the current workspaces:**
 
 <p align="center">
@@ -658,6 +779,19 @@ dvalincode mcp-serve             # task-level stdio MCP server for external agen
 Headless `run` and `mcp-serve` keep the same policy and audit chokepoint as
 the interactive clients. See the [unattended recipes](docs/RECIPES-UNATTENDED.md)
 for cron, CI, and external-agent examples.
+
+A run that scanned or filed a fix record also carries a `verification` envelope
+beside its answer — in `json`, in `stream-json`, and in the MCP `dvalin_run_task`
+result. `coverageStatus` is the *weakest* coverage the run has evidence of, so
+one complete scan cannot speak for a partial one, and any record it produced is
+listed by path for offline re-derivation. A CI gate can read it directly:
+
+```sh
+jq -e '.verification.coverageStatus == "complete"' run.json || exit 1
+```
+
+That is the same rule the pull-request comment applies, on the surface with no
+human watching. [Harness mode →](docs/HARNESS-MODE.md)
 
 ### Windows
 
@@ -834,7 +968,8 @@ RESTORE → COMPACT → COMMAND → BUILD → RUN → SAVE → RESPOND → DONE
 npm test
 ```
 
-**442 tests · 62 files · all green.**
+**584 core tests · 74 files · all green.** The VS Code extension has a separate
+37-test suite plus one opt-in published-package integration test.
 
 ---
 
@@ -955,7 +1090,7 @@ Contributions welcome. The codebase is intentionally small and surgical — see 
 ```sh
 git clone https://github.com/arthurpanhku/dvalincode
 cd dvalincode && npm install
-npm test                # 442/442 ✅
+npm test                # 584/584 core tests ✅
 npm run typecheck
 ```
 
@@ -1024,6 +1159,8 @@ Full source references: [docs/REFERENCES.md](docs/REFERENCES.md)
 | Shivas | [@shivasb42](https://github.com/shivasb42) |
 | Aditya | [@adity982](https://github.com/adity982) |
 | badhope | [@weed33834](https://github.com/weed33834) |
+| Samran Asif | [@webdevsamran](https://github.com/webdevsamran) |
+| dchaudhari7177 | [@dchaudhari7177](https://github.com/dchaudhari7177) |
 
 See the [complete contribution history](https://github.com/arthurpanhku/dvalincode/graphs/contributors), including automated dependency and maintenance updates.
 

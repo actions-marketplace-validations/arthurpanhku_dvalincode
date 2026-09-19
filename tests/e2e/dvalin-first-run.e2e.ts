@@ -106,7 +106,8 @@ test('discovers detection engines on the first Dvalin run', async ({ page }) => 
   await openDvalinPanel(page);
 
   // Proves the web → API round-trip: engines are reported by the server, not hardcoded.
-  await expect(page.getByText('Detection engines')).toBeVisible();
+  await page.getByText('Evidence configuration', { exact: true }).click();
+  await expect(page.getByText('Detection engines', { exact: true })).toBeVisible();
   await expect(page.getByText('Dvalin Built-in')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Scan project' })).toBeVisible();
 });
@@ -125,10 +126,56 @@ test('separates scanning from remediation when no model is configured', async ({
 
   // Scanning is local and must stay available; only the agent-driven steps need
   // a provider, and they say so instead of failing at send time.
-  await expect(page.getByText('Remediation needs a model')).toBeVisible();
+  await expect(page.getByText('Remediation and verification need a model', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Fix selected findings' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Verify remediation' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Publish draft PR' })).toBeDisabled();
+});
+
+test('imports and re-derives a Verified Fix Record offline', async ({ page }) => {
+  const coverage = {
+    status: 'complete',
+    scanners: [{ id: 'builtin', status: 'completed' }],
+    exclusions: [],
+    deferred: [],
+    notes: [],
+  };
+  const record = {
+    schema: 'dvalin-fix-record/v2',
+    generatedAt: '2026-09-18T07:13:13.351Z',
+    tool: { name: 'dvalincode', version: '0.19.0' },
+    workflowId: 'security-web-test',
+    projectId: 'project-web-test',
+    executor: 'codex',
+    before: { scanId: 'before', completedAt: '2026-09-18T07:00:00.000Z', coverage, targets: [{}] },
+    after: { scanId: 'after', completedAt: '2026-09-18T07:10:00.000Z', coverage, remainingTargets: [], introduced: [] },
+    gate: { threshold: 'high', mode: 'all' },
+    outcome: 'verified',
+    checks: [{ kind: 'test', command: 'npm run test', exitCode: 0, passed: true }],
+    assurance: 'scan-and-checks',
+    verdict: { verified: true, reasons: [] },
+    recordHash: '2b945b4481276aadfb3477801191cb96b89040cc7ca946f505604e803877bbda',
+  };
+
+  await page.route('**/api/remediation/verify-fix', async route => {
+    expect(route.request().postDataJSON()).toMatchObject({ schema: 'dvalin-fix-record/v2', workflowId: 'security-web-test' });
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, reasons: [], record }) });
+  });
+  await openDvalinPanel(page);
+
+  await page.getByLabel('Verified Fix Record file').setInputFiles({
+    name: 'verified-fix-record.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(record)),
+  });
+
+  const verification = page.getByRole('region', { name: 'Offline fix record verification' });
+  await expect(verification).toContainText('verified-fix-record.json');
+  await expect(verification).toContainText('Verified repair');
+  await expect(verification).toContainText('codex');
+  await expect(verification).toContainText('npm run test');
+  await expect(verification).toContainText('exit 0');
+  await expect(verification).toContainText('It does not re-scan the current workspace.');
 });
 
 for (const theme of ['light', 'dark'] as const) {

@@ -1,4 +1,4 @@
-import type { ServerEvent, SessionMeta, AppConfig, BackendChatMessage, ApprovalMode, AgentMode, ProviderPoolConfig, CodePermissionMode, SarifImportResult, RemediationFinding, RemediationWorktreeResult, RemediationCase, RemediationCaseStatus, SkillSummary, LLMConfig, Profile, DvalinScanner, DvalinScannerId, DvalinScanResult } from '../types.ts';
+import type { ServerEvent, SessionMeta, AppConfig, BackendChatMessage, ApprovalMode, AgentMode, ProviderPoolConfig, CodePermissionMode, SarifImportResult, RemediationFinding, RemediationWorktreeResult, RemediationCase, RemediationCaseStatus, SkillSummary, LLMConfig, Profile, DvalinScanner, DvalinScannerId, DvalinScanResult, DvalinFixRecordVerification, RecoveredTurn } from '../types.ts';
 
 const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
 
@@ -236,6 +236,8 @@ export type SessionDetail = {
   cwd: string;
   messages: BackendChatMessage[];
   summary?: string;
+  /** Interrupted turns not yet completed; absent on older servers. */
+  recovered?: RecoveredTurn[];
 };
 
 export async function fetchSessionDetail(id: string): Promise<SessionDetail> {
@@ -326,6 +328,20 @@ export async function runDvalinSecuritySuite(cwd: string, scanners: DvalinScanne
     throw new Error(err.error ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<DvalinScanResult>;
+}
+
+/** Re-derive a portable Verified Fix Record without workspace or network access. */
+export async function verifyDvalinFixRecord(record: unknown): Promise<DvalinFixRecordVerification> {
+  const res = await fetch('/api/remediation/verify-fix', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(record),
+  });
+  if (!res.ok) {
+    const err = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(err.error ?? `Could not verify fix record (HTTP ${res.status})`);
+  }
+  return res.json() as Promise<DvalinFixRecordVerification>;
 }
 
 export async function fetchRemediationCases(cwd?: string): Promise<RemediationCase[]> {

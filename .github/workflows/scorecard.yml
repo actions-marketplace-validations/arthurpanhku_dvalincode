@@ -20,13 +20,13 @@ jobs:
       security-events: write
       id-token: write
     steps:
-      # actions/checkout v7.0.0
+      # actions/checkout v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           persist-credentials: false
 
       - name: Run OpenSSF Scorecard
-        # ossf/scorecard-action v2.4.3
+        # ossf/scorecard-action v2.4.4
         uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc
         with:
           results_file: scorecard-results.sarif
@@ -34,8 +34,8 @@ jobs:
           publish_results: true
 
       - name: Upload Scorecard SARIF
-        # github/codeql-action/upload-sarif v4.36.2
-        uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28
+        # github/codeql-action/upload-sarif v4.38.0
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63
         with:
           sarif_file: scorecard-results.sarif
 
