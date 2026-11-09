@@ -332,7 +332,7 @@ runs:
       if: ${{ inputs.upload-sarif == 'true' }}
       # github/codeql-action/upload-sarif v4.38.0 — pinned by digest, same as
       # every action in this repository's own workflows.
-      uses: github/codeql-action/upload-sarif@1c5b675653bb5c22dbe9b12b556ec555138e09fd
+      uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066
       with:
         sarif_file: ${{ inputs.sarif-file }}
         category: dvalin
